@@ -21,9 +21,8 @@ type Comments = String
 --     deriving (Eq, Show)
 type ConceptFile = FilePath
 type IPFile = FilePath
-type AgentFiles = (ConceptFile,IPFile)
 type AgentMemory = ([Axiom],[Concept])
-data Agent = Agent Comments (Width, Depth, Solution) AgentFiles AgentMemory
+data Agent = Agent Comments (Width, Depth, Solution) AgentMemory
 
 instance Size IP where
     size (IP _ x y _) = size x + size y
@@ -40,6 +39,14 @@ data Axiom = DArrow String Lhs Rhs  |  SArrow String Lhs Rhs
 instance Size Axiom where
     size (DArrow _ x y) = size x + size  y
     size (SArrow _ x y) = size x + size  y
+
+axRhs :: Axiom -> Rhs
+axLhs :: Axiom -> Lhs
+axRhs (DArrow _ _ rhs) = rhs
+axRhs (SArrow _ _ rhs) = rhs
+axLhs (DArrow _ lhs _) = lhs
+axLhs (SArrow _ lhs _) = lhs
+
 -------------------------------------------------------------------------------
 ---------------- INSTANCE DECLARATIONS ----------------------------------------
 -------------------------------------------------------------------------------

@@ -15,7 +15,6 @@ import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
 
-
 class Size a where
     size :: a -> Int
 

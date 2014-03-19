@@ -561,9 +561,13 @@ patToExp (HsPIrrPat pat) = HsIrrPat (patToExp pat)
 getDecs :: HsModule -> [HsDecl]
 getDecs (HsModule _ _ _ _ decs) = decs
 
+getSubExpAx :: Axiom -> [HsExp]
+getSubExpAx (DArrow _ x y) = getSubExp x ++ getSubExp y
+getSubExpAx (SArrow _ x y) = getSubExp x ++ getSubExp y
+
 -- | returns a list of all subexpressions
 getSubExp :: HsExp -> [HsExp]
-getSubExp e = case e of
+getSubExp e = e : case e of
     HsInfixApp e1 _ e2 -> e : (getSubExp e1 ++ getSubExp e2)
     HsApp (HsVar _) e2 -> e : getSubExp e2
     HsApp e1 e2 -> e : (getSubExp e1 ++ getSubExp e2)

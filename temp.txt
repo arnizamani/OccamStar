@@ -1,0 +1,159 @@
+Num ->>_Lang Aterm
+Num + Num ->>_Lang Num
+
+Num ->>_Lang Aterm
+Num + Dig ->>_Lang Num
+
+Num ->>_Lang Aterm
+Num + Aterm ->>_Lang Num
+
+Num ->>_Lang Aterm
+Num + 2 ->>_Lang Num
+
+Num ->>_Lang Aterm
+Dig + Num ->>_Lang Num
+
+Num ->>_Lang Aterm
+Dig + Dig ->>_Lang Num
+
+Num ->>_Lang Aterm
+Dig + Aterm ->>_Lang Num
+
+Num ->>_Lang Aterm
+Dig + 2 ->>_Lang Num
+
+Num ->>_Lang Aterm
+Aterm + Num ->>_Lang Num
+
+Num ->>_Lang Aterm
+Aterm + Dig ->>_Lang Num
+
+Num ->>_Lang Aterm
+Aterm + Aterm ->>_Lang Num
+
+Num ->>_Lang Aterm
+Aterm + 2 ->>_Lang Num
+
+Num ->>_Lang Aterm
+1 + Num ->>_Lang Num
+
+Num ->>_Lang Aterm
+1 + Dig ->>_Lang Num
+
+Num ->>_Lang Aterm
+1 + Aterm ->>_Lang Num
+
+Num ->>_Lang Aterm
+Num + Num ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Num + Dig ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Num + Aterm ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Num + 2 ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Dig + Num ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Dig + Dig ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Dig + Aterm ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Dig + 2 ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Aterm + Num ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Aterm + Dig ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Aterm + Aterm ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Aterm + 2 ->>_Lang Dig
+
+Num ->>_Lang Aterm
+1 + Num ->>_Lang Dig
+
+Num ->>_Lang Aterm
+1 + Dig ->>_Lang Dig
+
+Num ->>_Lang Aterm
+1 + Aterm ->>_Lang Dig
+
+Num ->>_Lang Aterm
+Num + Num ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Num + Dig ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Num + Aterm ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Num + 2 ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Dig + Num ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Dig + Dig ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Dig + Aterm ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Dig + 2 ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Aterm + Num ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Aterm + Dig ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Aterm + Aterm ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+Aterm + 2 ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+1 + Num ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+1 + Dig ->>_Lang Aterm
+
+Num ->>_Lang Aterm
+1 + Aterm ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Num + Num ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Num + Dig ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Num + 2 ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Dig + Num ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Dig + Dig ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+Dig + 2 ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+1 + Num ->>_Lang Aterm
+
+1 : 2 ->>_Lang Aterm
+1 + Dig ->>_Lang Aterm
+

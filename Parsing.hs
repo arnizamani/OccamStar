@@ -12,6 +12,7 @@ import Data.Word
 import Data.Char
 import Data.Maybe
 import System.IO
+import Control.Monad (liftM)
 import Niz
 
 
@@ -277,31 +278,37 @@ parseAgent f = do
             putStrLn $ "       Agent file must define width, depth, solution, filename."
             return Nothing
         else do
-        axioms' <- mapM parseEq restLines
+        let axiomLines =
+              filter  (\x ->     findInfixIndex " ->>_" x /= Nothing
+                              || findInfixIndex " ->_"  x /= Nothing)
+                      restLines
+        let conceptLines =
+              filter  (\x ->     findInfixIndex " ->>_" x == Nothing
+                              && findInfixIndex " ->_"  x == Nothing)
+                      restLines
+        axioms' <- mapM parseEq axiomLines
         let axioms = nub $ concat axioms'
         let width = getWidth axioms
         let depth = getDepth axioms
         let sol   = getSolution axioms
-        let file = getFilename axioms
-        let cfile = getConceptFile axioms
-        concepts  <- parseConceptsFile cfile
+        let inputs =
+                concatMap parseCInput
+              . map (\(x:xs) -> init xs)
+              . filter (\(x:xs) -> x == '(' && (take 1 $ reverse xs) == ")")
+              . filter (not . null)
+              . map strip
+              $ conceptLines
+        concepts <- (liftM concat) $ mapM parseConcept $ inputs
+        --concepts  <- parseConceptsFile cfile
         if width == 0 || depth == 0
         then do
             putStrLn $ "Error: Width and depth parameters must be greater than zero."
             return Nothing
         else do
-        if file == ""
-        then do
-            putStrLn $ "Error: filename parameter is not defined."
-            putStrLn $ "       It is required for training."
-            return Nothing
-        else do
         putStrLn $ "Parsed agent "
         putStrLn $ "Width = " ++ show width
         putStrLn $ "Depth = " ++ show depth
-        putStrLn $ "Traing file = " ++ file
-        putStrLn $ "Concepts file = " ++ cfile
-        return $ Just $ Agent (unlines com) (width, depth, sol) (cfile,file) (axioms,concepts)
+        return $ Just $ Agent (unlines com) (width, depth, sol) (axioms,concepts)
         --return Nothing
 
 
@@ -320,14 +327,6 @@ getDepth axioms = let r = [x | (DArrow "Param" (HsVar (UnQual (HsIdent "Depth"))
 getSolution :: [Axiom] -> Int
 getSolution axioms = let r = [x | (DArrow "Param" (HsVar (UnQual (HsIdent "Solution"))) (HsLit (HsInt x))) <- axioms]
                   in if null r then 0 else (fromIntegral $ head r)
-
-getFilename :: [Axiom] -> String
-getFilename axioms = let r = [x | (DArrow "Param" (HsVar (UnQual (HsIdent "Filename"))) (HsLit (HsString x))) <- axioms]
-                  in if null r then "" else (head r)
-
-getConceptFile :: [Axiom] -> String
-getConceptFile axioms = let r = [x | (DArrow "Param" (HsVar (UnQual (HsIdent "Concepts"))) (HsLit (HsString x))) <- axioms]
-                  in if null r then "" else (head r)
 
 -- merge the two HsDecl, one as lhs and one as rhs
 mergeHsDecl :: HsDecl -> HsDecl -> (HsExp,HsExp)

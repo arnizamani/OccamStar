@@ -105,6 +105,7 @@ con = (HsQConOp (Special HsCons))   -- i.e.,     :
 -------- FUNCTIONS TO REPLACE A VARIABLE WITH AN EXP --------------------------
 -------------------------------------------------------------------------------
 
+
 -- | Replaces an HsPat with an HsExp (arg) in the main expression (exp)
 replacePatExp :: Rhs -> HsExp -> HsExp -> HsExp
 replacePatExp rhs (HsVar (UnQual (HsIdent (x:xs)))) (HsCon (UnQual c))
@@ -139,6 +140,17 @@ replacePatExp rhs (HsCon p) (HsCon e) | p == e
 replacePatExp rhs (HsApp (HsCon p) x) (HsApp (HsCon e) y) | p == e
         = replacePatExp rhs x y
 replacePatExp rhs _  _   = rhs
+
+-- replace x with y in z
+replaceSubExp :: HsExp -> HsExp -> HsExp -> HsExp
+replaceSubExp x y z =
+    if z == x
+    then y 
+    else case z of
+           HsApp e1 e2 -> HsApp (replaceSubExp x y e1) (replaceSubExp x y e2)
+           HsInfixApp e1 q e2 -> HsInfixApp (replaceSubExp x y e1) q (replaceSubExp x y e2)
+           HsNegApp e -> HsNegApp (replaceSubExp x y e)
+           exp -> exp
 
 replaceAllSubExp :: HsExp -> HsName -> HsExp -> HsExp
 replaceAllSubExp exp v arg = case exp of
@@ -568,31 +580,31 @@ getSubExpAx (SArrow _ x y) = getSubExp x ++ getSubExp y
 -- | returns a list of all subexpressions
 getSubExp :: HsExp -> [HsExp]
 getSubExp e = e : case e of
-    HsInfixApp e1 _ e2 -> e : (getSubExp e1 ++ getSubExp e2)
-    HsApp (HsVar _) e2 -> e : getSubExp e2
-    HsApp e1 e2 -> e : (getSubExp e1 ++ getSubExp e2)
-    HsNegApp e1 -> e : (getSubExp e1)
-    HsLambda _ _ e1 -> e : (getSubExp e1)
-    HsLet decs e1 -> [e] ++ concatMap getSubExpDecl decs ++ getSubExp e1
-    HsIf e1 e2 e3 -> e : (getSubExp e1 ++ getSubExp e2 ++ getSubExp e3)
-    HsCase e1 alts -> [e] ++ getSubExp e1 ++ concatMap getSubExpAlt alts
-    HsDo ss -> e : concatMap getSubExpStmt ss
-    HsTuple es -> e : (concatMap getSubExp es)
-    HsList es -> e : (concatMap getSubExp es)
-    HsParen e1 ->  e : (getSubExp e1)
-    HsLeftSection e1 _ -> e : (getSubExp e1)
-    HsRightSection _ e1 -> e : (getSubExp e1)
-    HsRecConstr _ fields -> e : (concatMap (\(HsFieldUpdate _ e1) -> getSubExp e1)fields)
-    HsRecUpdate e1 fields -> [e] ++ (getSubExp e1) ++ (concatMap (\(HsFieldUpdate _ e2) -> getSubExp e2)fields)
-    HsEnumFrom e1 -> e : (getSubExp e1)
-    HsEnumFromTo e1 e2 -> e : (getSubExp e1 ++ getSubExp e2)
-    HsEnumFromThen e1 e2 -> e : (getSubExp e1 ++ getSubExp e2)
-    HsEnumFromThenTo e1 e2 e3 -> e : (getSubExp e1 ++ getSubExp e2 ++ getSubExp e3)
-    HsListComp e1 ss -> [e] ++ getSubExp e1 ++ concatMap getSubExpStmt ss
-    HsExpTypeSig _ e1 _ -> e : (getSubExp e1)
-    HsAsPat _ e1 -> e : (getSubExp e1)
-    HsIrrPat  e1 -> e : (getSubExp e1)
-    _ -> [e]
+    HsInfixApp e1 _ e2 -> getSubExp e1 ++ getSubExp e2
+    HsApp (HsVar _) e2 -> getSubExp e2
+    HsApp e1 e2 -> getSubExp e1 ++ getSubExp e2
+    HsNegApp e1 -> getSubExp e1
+    HsLambda _ _ e1 -> getSubExp e1
+    HsLet decs e1 -> concatMap getSubExpDecl decs ++ getSubExp e1
+    HsIf e1 e2 e3 -> getSubExp e1 ++ getSubExp e2 ++ getSubExp e3
+    HsCase e1 alts -> getSubExp e1 ++ concatMap getSubExpAlt alts
+    HsDo ss -> concatMap getSubExpStmt ss
+    HsTuple es -> concatMap getSubExp es
+    HsList es -> concatMap getSubExp es
+    HsParen e1 ->  getSubExp e1
+    HsLeftSection e1 _ -> getSubExp e1
+    HsRightSection _ e1 -> getSubExp e1
+    HsRecConstr _ fields -> concatMap (\(HsFieldUpdate _ e1) -> getSubExp e1) fields
+    HsRecUpdate e1 fields -> (getSubExp e1) ++ (concatMap (\(HsFieldUpdate _ e2) -> getSubExp e2)fields)
+    HsEnumFrom e1 -> getSubExp e1
+    HsEnumFromTo e1 e2 -> getSubExp e1 ++ getSubExp e2
+    HsEnumFromThen e1 e2 -> getSubExp e1 ++ getSubExp e2
+    HsEnumFromThenTo e1 e2 e3 -> getSubExp e1 ++ getSubExp e2 ++ getSubExp e3
+    HsListComp e1 ss -> getSubExp e1 ++ concatMap getSubExpStmt ss
+    HsExpTypeSig _ e1 _ -> getSubExp e1
+    HsAsPat _ e1 -> getSubExp e1
+    HsIrrPat  e1 -> getSubExp e1
+    _ -> []
 
 getSubExpStmt :: HsStmt -> [HsExp]
 getSubExpStmt (HsGenerator _ _ e) = getSubExp e

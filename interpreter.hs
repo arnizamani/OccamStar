@@ -139,7 +139,9 @@ expandNode concepts lx m maxSize maxLength (Right (exp,_), prev, t) = do
     let right' = [Right (x,d)
                   |   (Right (x,d)) <- r', 
                       wmSize concepts x <= maxSize, 
-                      not (x `elem` prev')]
+                      not (x `elem` prev'),
+                      all (\s -> not $ s `elem` prev') (getSubExp x)
+                      ]
     let right = map Right $ nubBy ((==) `on` fst) [(x,d) | Right (x,d) <- right']
     let left = [Left x | Left x <- r']
     if not (null lx) && not (null right)
@@ -319,10 +321,15 @@ interpreter b lx axioms' width depth types func@(HsApp fname arg) = do
       if null axioms && null arg'
       then return (t1,[])
       else do
+        -- check for increasing axioms
+        --let incr = [x | x@(Right (exp,Just (DArrow lang lhs rhs@(HsApp f1 f2)))) <- arg1,
+        --                if (wmSize [] lhs < wmSize [] rhs) then (f1 == fname) else False
+        --           ]
+        --let arg' = [x | x <- arg1, not (x `elem` incr)]
         (t2,exp') <- foldM (\(t,es) x -> do
                                 (t',r) <- applyRule b lx x width depth t func
                                 return (t',r ++ es))
-                           (t1,[]) 
+                           (t1,[])
                            axioms
         let exp = nubBy ((==) `on` fst) exp'
         let argnew = [Right (HsApp fname r, d) | (r,d) <- rights arg', r /= arg]
@@ -337,7 +344,13 @@ interpreter b lx axioms' width depth types func@(HsApp fname arg) = do
 interpreter b lx axioms width depth types func@(HsInfixApp e1 op@(HsQVarOp (UnQual opname)) e2) = do
     (t1,e1') <- interpreter False lx axioms width depth types e1
     (t2,e2') <- interpreter False lx axioms width depth t1 e2
-    --qual <- prelude func
+    --let incr1 = [x | x@(Right (exp,Just (DArrow lang lhs rhs@(HsInfixApp f1 op1 f2)))) <- e1'',
+    --                    if (wmSize [] lhs < wmSize [] rhs) then (op1 == op) else False ]
+    --let e1' = [x | x <- e1'', not (x `elem` incr1)]
+    --let incr2 = [x | x@(Right (exp,Just (DArrow lang lhs rhs@(HsInfixApp f1 op2 f2)))) <- e2'',
+    --                    if (wmSize [] lhs < wmSize [] rhs) then (op2 == op) else False ]
+    --let e2' = [x | x <- e2'', not (x `elem` incr2)]
+    
     let e1new = [Right ((HsInfixApp x op e2),d) | (Right (x,d)) <- e1', x /= e1]
     let e2new = [Right ((HsInfixApp e1 op x),d) | (Right (x,d)) <- e2', x /= e2]
     let enew = e1new ++ e2new -- ++ map (\(Right x) -> Right (x,Nothing)) qual

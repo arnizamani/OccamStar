@@ -4,12 +4,14 @@
     Started: 2013-09-29
     Updated: 2014-03-06
 -}
- 
+
 module Main where
 import System.Environment (getArgs, getProgName)
 import Niz
 import Parsing
 import Data.Char
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Instances
 import Interpreter
 import Data.List
@@ -28,6 +30,7 @@ import Control.Monad (foldM)
 import Control.Parallel.Strategies
 import Debug.Trace
 
+type Concepts = Set HsExp
 type Utility = Int
 type Delta = [Axiom]
 noSrc = SrcLoc "" 0 0
@@ -35,6 +38,9 @@ noSrc = SrcLoc "" 0 0
 -- | Free variables are those that occur in lhs but not in rhs.
 -- | For example, the axiom (x*0=0) has one free variable.
 freeVariables = 1
+
+-- | Use abstraction (anti-unification) when d > 6
+useAbstraction = True
 
 printMessage = do
     p <- getProgName
@@ -92,35 +98,30 @@ main = do
             putStrLn $ "Error reading agent."
             return ()
         else do
-        let (Just agent@(Agent c (width,depth,sol) (axioms,concepts))) = agent'
+        writeFile "trace.txt" " \n"
+        let (Just agent@(Agent comm param@(width,depth,sol) (axioms,concepts))) = agent'
         (pos,neg) <- parseTrainingFile ipfile
         let examples = pos ++ neg
         let units = makeUnitConcepts examples
         let unary = makeUnaryConcepts examples
         let binary = makeBinaryConcepts examples
-        let newc = units ++ unary ++ binary
-        let t = foldl (flip insertInConcepts) [] (concepts ++ newc)
-        let newAgent = (Agent c (width,depth,sol) (axioms,t))
-        -- putStrLn $ show $ wmSize concepts $ lhs $ head pos
-        (delt,util,len) <- findDelta 0 newAgent neg pos
-        if null delt
+        let ipConcepts = nub (units ++ unary ++ binary)
+        let updatedConcepts = foldl (flip insertInConcepts) [] (concepts ++ ipConcepts)
+        (delt,util,len) <- findDelta 0 (Agent comm param (axioms,updatedConcepts)) neg pos
+        if not (null delt)
         then do
-            --putStrLn $ "All examples solved. Nothing to learn."
-            saveAgent newAgent agentfile
-        else do
             putStrLn $ "\nLearned this rule: "
             putStrLn . unlines . map showAxiom $ delt
             putStrLn . show $ util
             putStrLn $ "Do you want the agent to remember it? (Y/n) "
             c <- getChar
             if c == 'n' || c == 'N'
-            then  saveAgent newAgent agentfile
-            else do
-                let (Agent c (width,depth,sol) (axioms,concepts)) = newAgent
-                let newltm = union axioms delt
-                let newAgent' = Agent c (width,depth,sol) (newltm,concepts)
-                saveAgent newAgent' agentfile
+            then  saveAgent (Agent comm param (axioms,updatedConcepts)) agentfile
+            else do -- update productions
+                saveAgent (Agent comm param ((union axioms delt),updatedConcepts)) agentfile
                 putStrLn $ "Stored in memory."
+        else do
+            saveAgent (Agent comm param (axioms,updatedConcepts)) agentfile
      _  -> printMessage
     
         
@@ -132,19 +133,22 @@ findDelta len agent neg posex = do
     let pos = [x  |  x@(IP _ p e v) <- posex,
                      e /= HsVar (UnQual (HsIdent "x"))]
     let ded = [x  |  x@(IP _ p (HsVar (UnQual (HsIdent "x"))) v) <- posex]
-    let posAxioms = [DArrow s p e | IP s p e v <- pos]
+    let posAxioms = [DArrow s p e | IP s p e v <- pos, v > 0]
+    let posDelta = (posAxioms,sum [v | (IP _ _ _ v) <- pos, v > 0],0)
     let optimum   = sum ([v | IP _ p e v <- pos, v > 0]
                           ++ [v | IP _ p e v <- ded, v > 0])
     if optimum < 1
-    then return ([],0,0)
+    then return posDelta
     else do
     if len > sum (map size pos)
-    then do putStrLn $ "Size exceeded from " ++ show (sum (map size pos))
-            return (posAxioms,sum [v | (IP _ _ _ v) <- pos, v > 0],0)
+    then do
+        putStrLn $ "Size exceeded from " ++ show (sum (map size pos))
+        return posDelta
     else do
     if len > fromIntegral sol
-    then do putStrLn $ "Maximum size reached: " ++ show sol
-            return ([],0,0)
+    then do 
+        putStrLn $ "Maximum size reached: " ++ show sol
+        return posDelta
     else do
     let tag = head $ map getTag posex
     let langAxioms = if tag == "Lang"
@@ -167,7 +171,7 @@ findDelta len agent neg posex = do
             putStrLn $ "Computations1: "
             putStrLn $ unlines $ map (\x -> unlines $ map showState x) newans
             putStrLn $ "All examples solved. Nothing to learn.\n"
-            return ([],0,0)
+            return ([],0,1)
         else do
             (t2,newans) <- foldM (\(t,xs) (IP _ x y _) -> do
                                 (t',r) <- findSolDecl concepts langAxioms ltm width depth t (x,y)
@@ -178,17 +182,17 @@ findDelta len agent neg posex = do
                 putStrLn $ "Computations2: "
                 putStrLn $ unlines $ map (\x -> unlines $ map showState x) newans
                 putStrLn $ "All examples solved. Nothing to learn.\n"
-                return ([],0,0)
+                return ([],0,1)
             else findDelta 1 agent neg pos
     else do
         putStrLn $ "Searching at length: " ++ show len
         let posrhs = [e | IP s p e v <- pos, not (containsVar e)]
         let funcs' = [ (i, [f | f <- generateFuncsAll lang concepts i pos,
                                isPure f,
-                               axSize concepts f == i,
+                               axSize [] f == i,
                                not (f `elem` ltm),
                                not ((axLhs f) `elem` posrhs),
-                               --freeVars f <= freeVariables,
+                               length (freeVars f) <= freeVariables,
                                singleDomain f,
                                not (lhsIsVar f),
                                wmSize [] (axLhs f) >= wmSize [] (axRhs f),
@@ -211,13 +215,13 @@ findDelta len agent neg posex = do
         let delta1 =     [ [g]  | g <- fromJust (lookup len funcs),
                                   not (numberChange g)
                           ]
-        
+        let delta12 = delta2 ++ (if len < 6 then delta1 else [])
         --let delta1 = nubBy (\(x:[]) (y:[]) -> lhsIsSame x y && axRhs x == axRhs y) delta1''
-        putStrLn $ "    generated functions: " ++ show (length delta1 + length delta2)
+        putStrLn $ "    generated functions: " ++ show (length delta12)
         --appendFile "temp.txt"
         --  $ unlines $ map (\x -> concat . intersperse ", " $ map showAxiom x) delta
-        let ti = [] :: TypeInfo
-        let func delta = do
+        -- let ti = [] :: TypeInfo
+        let occam delta = do
                 (t2,result) <- foldM (\(t,xs) d -> do
                                 (t',r) <- performance width depth sol concepts langAxioms ltm t neg pos ded d
                                 return (t',r:xs) )
@@ -232,7 +236,7 @@ findDelta len agent neg posex = do
                     putStrLn $ "Optimal performance: " ++ show optimum
                     putStrLn $ show (length optimal) ++ " optimal deltas found."
                     appendFile "trace.txt" $ "OPTIMAL SOLUTIONS FOUND: \n"
-                    appendFile "trace.txt" $ (unlines $ map (\(x,y,z) -> unlines $ (map showAxiom x) ++ [" " ++ show y ++ ", " ++ show z]) $ optimal)
+                    appendFile "trace.txt" $ (unlines $ map (\(x,y,z) -> unlines $ (map showAxiom x) ++ ["  util:" ++ show y ++ ", comp len:" ++ show z ++ ", freevars: " ++ show (map freeVars x)]) $ optimal)
                     let delta = chooseBestDelta [x | x@(DArrow "Lang" _ _) <- ltm'] $ nub optimal
                     return $ Just delta
                 else do
@@ -243,15 +247,48 @@ findDelta len agent neg posex = do
                             return $ Just delta
                     else return Nothing
 
-        result2 <- func $ delta1 ++ delta2
+        result2 <- occam $ delta12
         if result2 /= Nothing
         then return $ fromJust result2
-        else do
-            --result1 <- func delta1
-            --if result1 /= Nothing
-            --then return $ fromJust result1
-            --else
-                findDelta (len+1) agent neg pos
+        else if len == fromIntegral sol
+             then do
+                putStrLn $ "Trying with abstractions..."
+                let tags = nub $ [t | (DArrow "Lang" _ y@(HsVar (UnQual (HsIdent t)))) <- ltm']
+                --putStrLn $ "Tags: " ++ show tags
+                let delta' = nub [[f] | f <- generateFuncsAbs tags posAxioms,
+                                    isPure f,
+                                    not (f `elem` ltm),
+                                    not ((axLhs f) `elem` posrhs),
+                                    length (freeVars f) <= freeVariables,
+                                    singleDomain f,
+                                    not (lhsIsVar f),
+                                    --wmSize [] (axLhs f) >= wmSize [] (axRhs f),
+                                    if tag=="Lang" then rhsIsTag f else True]
+                putStrLn $ "Abstractions generated: " ++ show (length delta')
+                result2 <- occam delta'
+                if result2 /= Nothing
+                  then return $ fromJust result2
+                  else do
+                    putStrLn $ "Trying with recursion"
+                    let delta5 = 
+                          [ [g1,g2]
+                                | g1@(DArrow lang _ _) <- posAxioms,
+                                  g2 <- map head $ group $ sort $ generateFuncsRec sol lang concepts tags g1,
+                                  isPure g2,
+                                  not (g2 `elem` ltm),
+                                  g1 /= g2,
+                                  singleDomain g2,
+                                  length (freeVars g2) <= freeVariables
+                            ]
+                    putStrLn $ "Recursive deltas generated: " ++ show (length delta5)
+                    -- writeFile "trace.txt" $ unlines $ map (unlines . map showAxiom) delta5
+                    result5 <- occam $  delta5
+                    if result5 /= Nothing
+                    then return $ fromJust result5
+                    else do
+                        putStrLn $ "Maximum size reached: " ++ show sol
+                        return posDelta
+             else findDelta (len+1) agent neg pos
 
 numberChange (DArrow _ (HsLit (HsInt _)) _) = True
 numberChange (SArrow _ (HsLit (HsInt _)) _) = True
@@ -351,7 +388,8 @@ performance :: Int -> Int -> Int
 performance width depth sol concepts laxioms ltm ti negex pos ded func = do
     --putStrLn $ "TypeInfo size = " ++ show (sum $ map (length . snd) ti)
     --putStrLn $ showTypeInfo ti
-    putStrLn $ unlines $ map showAxiom func
+    
+    --putStrLn $ unlines $ map showAxiom func
     let ltm' = ltm ++ func
     (t1,ansPos) <- foldM (\(t,xs) (IP _ a b y) -> do
                             (t',result,len) <- findAnswerDecl concepts laxioms ltm' width depth t (a,b)
@@ -379,18 +417,79 @@ performance width depth sol concepts laxioms ltm ti negex pos ded func = do
             else return (t3,(Nothing,util,compSize))
         else return (t3,(Nothing,util,compSize))
 
+-- generate recursive axioms
+-- one base case from IP
+-- one recursive case of the form
+--      f(big) ->> ... f(small) ...
+--   where, f(small) has size 0, and size small < size big
+generateFuncsRec :: Int -> Language -> [Concept] -> [String] -> Axiom -> [Axiom]
+generateFuncsRec d lang concepts tags base = 
+    let vconsts = "xyz"
+        vars = [HsVar (Qual (Module m) (HsIdent [c])) | c <- vconsts, m <- tags]
+        units = nub $ vars
+                      ++ [exp | (l,arit,freq,exp) <- concepts, 
+                                arit==0,
+                                l==lang,
+                                wmSize [] exp == 1]
+        unary  = [exp | (l,arit,freq,exp) <- concepts, arit==1, l==lang]
+        funcs = [f | (HsApp f _) <- getSubExp (axLhs base)]
+        unary' = [f | f <- unary, not (f `elem` funcs)]
+        binary = [exp | (l,arit,freq,exp) <- concepts, arit==2, l==lang]
+        bigs = [ (i, generateExps i units unary' binary) | i <- [1..d] ]
+        lhs = [(HsApp f x) | i <- [3..(d-3)],
+                             x <- fromJust (lookup i bigs),
+                             f <- funcs,
+                             --containsVar x,
+                             length [v | (HsVar (Qual _ v)) <- getSubExp x] == 1,
+                             (HsApp f x) /= axLhs base]
+        result = 
+            [DArrow lang (HsApp f x) rhs
+                | (HsApp f x) <- nub lhs,
+                  let xsize = wmSize [] x,
+                  let small = map (HsApp f)
+                              $ filter (\y -> wmSize [] y < xsize)
+                                [z | j <- [1..(xsize - 1)],
+                                     z <- generateExps j (getSubExp x) unary' binary,
+                                     containsVar z],
+                  rhs <- concat [generateExpsRec i small units unary' binary | i <- [0..(d - xsize - 1)]],
+                  rhs /= (HsApp f x),
+                  containsVar rhs,
+                  (not . null) [g | (HsApp g _) <- getSubExp rhs, g == f]
+                  --rhs <- generateExps (d-i) (units ++ small) unary binary,
+                  --or $ map (\x -> x `elem` (getSubExp rhs)) small
+                    ]
+    in result
+        
+-- generate abstractions of given axioms
+-- e.g. for 1+(2+3), it returns x+(2+3), x+(y+z), etc.
+generateFuncsAbs :: [String] -> [Axiom] -> Delta
+generateFuncsAbs _ [] = []
+generateFuncsAbs [] _ = []
+generateFuncsAbs tags axioms = 
+    let vconsts = "xyz"
+        vars = [HsVar (Qual (Module m) (HsIdent [c])) | c <- vconsts, m <- tags]
+        exps = [DArrow lang (foldl (\x' (v',s') -> replaceSubExp s' v' x') x v) (foldl (\x' (v',s') -> replaceSubExp s' v' x') y v) -- replace sub with v in ip
+                  | (DArrow lang x y) <- axioms,
+                    sub <- subsequences (nub (getSubExp x ++ getSubExp y)),
+                    length sub > 0 && length sub < 4,
+                    var <- subsequences vars,
+                    length var == length sub,
+                    -- not (sub `elem` vars),
+                    let v = zip var sub
+               ]
+    in  exps
+-- generate all axioms of given size
 generateFuncsAll :: Language -> [Concept] -> Int -> [IP] -> Delta
 generateFuncsAll _  _  len _   | len < 2 = []
 generateFuncsAll lang concepts len pos =
     let variables = if lang == "Lang" then "" else "xyz"
-        domains = [s | (_,_,f,(HsVar (UnQual (HsIdent s)))) <- concepts, f > 1]
+        domains = [s | (_,_,f,(HsVar (UnQual (HsIdent s)))) <- concepts]
         parts = [lhs | (IP _ lhs _ _) <- pos] ++ [rhs | (IP _ _ rhs _) <- pos]
         units = nub $ [x | x <- (concatMap getSubExp parts), size x == 1]
                       ++ [HsVar (Qual (Module d) (HsIdent [c]))
                                 | c <- variables, d <- domains]
                       ++ [exp | (l,arit,freq,exp) <- concepts, 
                                 arit==0,
-                                freq > 1,
                                 l==lang]
                                 -- size exp == 1]
         unary  = [exp | (l,arit,freq,exp) <- concepts, arit==1, l==lang] -- ,size exp == 1]
@@ -401,12 +500,49 @@ generateFuncsAll lang concepts len pos =
         result = concat
                  [ [DArrow lang p q, DArrow lang q p]
                       | i <- [1 .. (len `div` 2)],
-                        p <- fromJust (lookup i exps),
-                        q <- fromJust (lookup (len - i) exps),
+                        q <- fromJust (lookup i exps),
+                        p <- fromJust (lookup (len - i) exps),
                         if i == (len-i) then p /= q else True
                   ]
     in  result -- ++ [x :-> y | (x :->> y) <- result]
 
+
+generateExpsRec :: Int -> [HsExp] -> [HsExp] -> [HsExp] -> [HsExp] -> [HsExp]
+generateExpsRec len _  _     _  _ | len < 0 = []
+generateExpsRec 0   fs _     _  _  = fs
+generateExpsRec 1   fs units f1 _  = [HsApp x f | x <- f1, f <- fs] ++ units
+generateExpsRec 2   fs units _  f2
+        = concat [[HsInfixApp f (HsQVarOp op) x,HsInfixApp x (HsQVarOp op) f]
+                        | f <- fs,
+                          (HsVar op) <- f2,
+                          x <- units]
+generateExpsRec 3   fs units f1 f2
+    =   let exps2f = [HsApp x f | x <- f1, f <- fs]
+            exps2  = units
+            exps1  = generateExpsRec 2 fs units f1 f2
+        in concat
+            [[HsInfixApp x (HsQVarOp op) y, HsInfixApp y (HsQVarOp op) x]
+                | x <- exps2f,
+                  y <- exps2,
+                  (HsVar op) <- f2]
+            ++ [HsApp op x
+                    | op <- f1,
+                      x <- exps1]
+generateExpsRec len fs units f1 f2 = undefined
+{-
+generateExpsRec len fs units f1 f2
+    =   let exps2f = generateExpsRec (len-2) fs units f1 f2
+            exps2 = generateExpsRec (len-2) [] units f1 f2
+            exps1 = generateExpsRec (len-1) fs units f1 f2
+        in concat
+            [[HsInfixApp x (HsQVarOp op) y, HsInfixApp y (HsQVarOp op) x]
+                | x <- exps2f,
+                  y <- exps2,
+                  (HsVar op) <- f2]
+            ++ [HsApp op x
+                    | op <- f1,
+                      x <- exps1]
+-}
 generateExps :: Int -> [HsExp] -> [HsExp] -> [HsExp] -> [HsExp]
 generateExps len _ _ _ | len < 1 = []
 generateExps 1 units _ _ = units
@@ -423,7 +559,7 @@ generateExps len units funcs1 funcs2
                 arg <- exps1]
 
 containsVar :: HsExp -> Bool
-containsVar e = not $ null [x | (HsVar (Qual _ x)) <- getSubExp e]
+containsVar e = (not . null)  [x | (HsVar (Qual _ x)) <- getSubExp e]
 
 -- check if the axiom has only a single tag for each variable
 -- returns false for (Dig.x + Num.x)
@@ -434,9 +570,9 @@ singleDomain x =
     in all (==1)
         $ map (\v -> length $ nub [t | (t,v') <- tags, v'==v]) vars
 
--- count the number of free variables
-freeVars :: Axiom -> Int
+-- get free variables, those that occur in lhs but not in rhs
+freeVars :: Axiom -> [HsExp]
 freeVars f =
     let rhsvars = [v | v@(HsVar (Qual _ _)) <- getSubExp (axRhs f)]
         lhsvars = [v | v@(HsVar (Qual _ _)) <- getSubExp (axLhs f)]
-    in length [v | v <- lhsvars, not (v `elem` rhsvars)]
+    in [v | v <- lhsvars, not (v `elem` rhsvars)]

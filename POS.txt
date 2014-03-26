@@ -1,3 +1,0 @@
-IP is given by:
-
-(POS, [det, är, jag], [pron, verb, pron])

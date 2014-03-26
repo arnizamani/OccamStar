@@ -22,14 +22,14 @@ showConcept (lang,arity,freq,exp) =
 
 -- get all unit concepts from the set of examples
 makeUnitConcepts :: [IP] -> [Concept]
-makeUnitConcepts ips = concatMap concepts' ips
+makeUnitConcepts ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
         [(lang,0,1,exp) | exp <- getSubExp lhs]
           ++ [(lang,0,1,exp) | exp <- getSubExp rhs]
 -- get all unary concepts (unary functions) from the set of examples
 makeUnaryConcepts :: [IP] -> [Concept]
-makeUnaryConcepts ips = concatMap concepts' ips
+makeUnaryConcepts ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
         [(lang,1,1,f) | (HsApp f@(HsVar _) _) <- getSubExp lhs]
@@ -39,7 +39,7 @@ makeUnaryConcepts ips = concatMap concepts' ips
 
 -- get all binary concepts (infix functions) from the set of examples
 makeBinaryConcepts :: [IP] -> [Concept]
-makeBinaryConcepts ips = concatMap concepts' ips
+makeBinaryConcepts ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
         [(lang,2,1,HsVar f) | (HsInfixApp _ (HsQVarOp f) _) <- getSubExp lhs]

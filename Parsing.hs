@@ -10,6 +10,7 @@ import Language.Haskell.Parser
 import Data.List
 import Data.Word
 import Data.Char
+import Data.Time
 import Data.Maybe
 import System.IO
 import Control.Monad (liftM)
@@ -17,42 +18,50 @@ import Niz
 
 
 showConcept :: Concept -> String
-showConcept (lang,arity,freq,exp) = 
-    "(" ++ lang ++ "," ++ show arity ++ "," ++ show freq ++ "," ++ showExp exp ++ ")"
+showConcept (lang,arity,freq,start,last,exp) = 
+    "(" ++ lang
+        ++ "," ++ show arity
+        ++ "," ++ show freq
+        ++ "," ++ show start
+        ++ "," ++ show last
+        ++ "," ++ showExp exp
+        ++ ")"
 
 -- get all unit concepts from the set of examples
-makeUnitConcepts :: [IP] -> [Concept]
-makeUnitConcepts ips = nub $ concatMap concepts' ips
+makeUnitConcepts :: UTCTime -> [IP] -> [Concept]
+makeUnitConcepts time ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
-        [(lang,0,1,exp) | exp <- getSubExp lhs]
-          ++ [(lang,0,1,exp) | exp <- getSubExp rhs]
+        [(lang,0,1,time,time,exp) | exp <- getSubExp lhs]
+          ++ [(lang,0,1,time,time,exp) | exp <- getSubExp rhs]
 -- get all unary concepts (unary functions) from the set of examples
-makeUnaryConcepts :: [IP] -> [Concept]
-makeUnaryConcepts ips = nub $ concatMap concepts' ips
+makeUnaryConcepts :: UTCTime -> [IP] -> [Concept]
+makeUnaryConcepts time ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
-        [(lang,1,1,f) | (HsApp f@(HsVar _) _) <- getSubExp lhs]
-        ++ [(lang,1,1,f) | (HsApp f@(HsCon _) _) <- getSubExp lhs]
-        ++ [(lang,1,1,f) | (HsApp f@(HsVar _) _) <- getSubExp rhs]
-        ++ [(lang,1,1,f) | (HsApp f@(HsCon _) _) <- getSubExp rhs]
+        [(lang,1,1,time,time,f) | (HsApp f@(HsVar _) _) <- getSubExp lhs]
+        ++ [(lang,1,1,time,time,f) | (HsApp f@(HsCon _) _) <- getSubExp lhs]
+        ++ [(lang,1,1,time,time,f) | (HsApp f@(HsVar _) _) <- getSubExp rhs]
+        ++ [(lang,1,1,time,time,f) | (HsApp f@(HsCon _) _) <- getSubExp rhs]
 
 -- get all binary concepts (infix functions) from the set of examples
-makeBinaryConcepts :: [IP] -> [Concept]
-makeBinaryConcepts ips = nub $ concatMap concepts' ips
+makeBinaryConcepts :: UTCTime -> [IP] -> [Concept]
+makeBinaryConcepts time ips = nub $ concatMap concepts' ips
   where
     concepts' (IP lang lhs rhs _) = 
-        [(lang,2,1,HsVar f) | (HsInfixApp _ (HsQVarOp f) _) <- getSubExp lhs]
-        ++ [(lang,2,1,HsVar f) | (HsInfixApp _ (HsQConOp f) _) <- getSubExp lhs]
-        ++ [(lang,2,1,HsVar f) | (HsInfixApp _ (HsQVarOp f) _) <- getSubExp rhs]
-        ++ [(lang,2,1,HsVar f) | (HsInfixApp _ (HsQConOp f) _) <- getSubExp rhs]
+        [(lang,2,1,time,time,HsVar f) | (HsInfixApp _ (HsQVarOp f) _) <- getSubExp lhs]
+        ++ [(lang,2,1,time,time,HsVar f) | (HsInfixApp _ (HsQConOp f) _) <- getSubExp lhs]
+        ++ [(lang,2,1,time,time,HsVar f) | (HsInfixApp _ (HsQVarOp f) _) <- getSubExp rhs]
+        ++ [(lang,2,1,time,time,HsVar f) | (HsInfixApp _ (HsQConOp f) _) <- getSubExp rhs]
 
 insertInConcepts :: Concept -> [Concept] -> [Concept]
 insertInConcepts c [] = [c]
-insertInConcepts c@(l,a,f,e) cs = 
-    let nf = f + sum [f' | (l',a',f',e') <- cs, l' == l, a' == a, e' == e]
-        c' = (l,a,nf,e)
-        result = c' : [x | x@(l',a',f',e') <- cs, (l' /= l || a' /= a || e' /= e)]
+insertInConcepts c@(l,a,f,first',last',e) cs = 
+    let nf = f + sum [f' | (l',a',f',_,_,e') <- cs, l' == l, a' == a, e' == e]
+        firsts = [f | (l',a',f',f,_,e') <- cs, l' == l, a' == a, e' == e]
+        first = if null firsts then first' else head firsts
+        c' = (l,a,nf,first,last',e)
+        result = c' : [x | x@(l',a',f',_,_,e') <- cs, (l' /= l || a' /= a || e' /= e)]
     in result
 
 -- | Parse the IP file, return positive and negative examples
@@ -102,7 +111,7 @@ parseTrainingFile file = do
     return $ (pos,neg)
 
 parseConcept :: Concept' -> IO [Concept]
-parseConcept (lang,0,freq,str) = do
+parseConcept (lang,0,freq,first,last,str) = do
     let a' = parseModule $ "main = " ++ str
     if not (parseSuccess a')
     then return []
@@ -113,11 +122,11 @@ parseConcept (lang,0,freq,str) = do
     then return []
     else do
     let exp = head exps
-    return [(lang,0,freq,normalExp False exp)]
-parseConcept (lang,arit,freq,str@(s:_)) | isLetter s
-        = return [(lang,arit,freq,HsVar (UnQual (HsIdent str)))]
-parseConcept (lang,arit,freq,str)
-        = return [(lang,arit,freq,HsVar (UnQual (HsSymbol str)))]
+    return [(lang,0,freq,first,last,normalExp False exp)]
+parseConcept (lang,arit,freq,first,last,str@(s:_)) | isLetter s
+        = return [(lang,arit,freq,first,last,HsVar (UnQual (HsIdent str)))]
+parseConcept (lang,arit,freq,first,last,str)
+        = return [(lang,arit,freq,first,last,HsVar (UnQual (HsSymbol str)))]
 
 parseIP :: IP' -> IO [IP]
 parseIP (name,a,b,c) = do
@@ -215,7 +224,7 @@ parseCInput :: String -> [Concept']
 parseCInput "" = []
 parseCInput s | not (',' `elem` s) = []
 parseCInput s = if not (null name) && (>=0) arity && (>=0) freq && not (null value)
-                  then [(name,arity,freq,value)]
+                  then [(name,arity,freq,first,last,value)]
                   else []
     where
         name = strip $ takeWhile (/= ',') s
@@ -229,7 +238,13 @@ parseCInput s = if not (null name) && (>=0) arity && (>=0) freq && not (null val
         freq = if not (null freq') && all isDigit freq'
                     then (read freq' :: Int)
                     else -1
-        value = strip $ drop 1 $ dropWhile (/= ',') s2
+        s3 = strip $ drop 1 $ dropWhile (/= ',') s2
+        first' = strip $ takeWhile (/=',') s3
+        first = read first' :: UTCTime
+        s4 = strip $ drop 1 $ dropWhile (/= ',') s3
+        last' = strip $ takeWhile (/=',') s4
+        last = read last' :: UTCTime
+        value = strip $ drop 1 $ dropWhile (/= ',') s4
 
 parseInput :: String -> [IP']
 parseInput "" = []

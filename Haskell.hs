@@ -139,6 +139,12 @@ replacePatExp rhs (HsCon p) (HsCon e) | p == e
         = rhs
 replacePatExp rhs (HsApp (HsCon p) x) (HsApp (HsCon e) y) | p == e
         = replacePatExp rhs x y
+replacePatExp rhs (HsApp (HsVar p) x) (HsApp (HsVar e) y) | p == e
+        = replacePatExp rhs x y
+replacePatExp rhs (HsApp (HsVar p) x) (HsApp (HsCon e) y) | p == e
+        = replacePatExp rhs x y
+replacePatExp rhs (HsApp (HsCon p) x) (HsApp (HsVar e) y) | p == e
+        = replacePatExp rhs x y
 replacePatExp rhs _  _   = rhs
 
 -- replace x with y in z
@@ -414,6 +420,8 @@ expVarBinding (HsAsPat n2 p) (HsAsPat n1 e) | n1 == n2 = expVarBinding p e
 expVarBinding (HsIrrPat p) (HsIrrPat e) = expVarBinding p e
 expVarBinding (HsApp (HsCon p) p') (HsApp (HsCon e) e') | p == e = expVarBinding p' e'
 expVarBinding (HsApp (HsVar p) p') (HsApp (HsVar e) e') | p == e = expVarBinding p' e'
+expVarBinding (HsApp (HsCon p) p') (HsApp (HsVar e) e') | p == e = expVarBinding p' e'
+expVarBinding (HsApp (HsVar p) p') (HsApp (HsCon e) e') | p == e = expVarBinding p' e'
 expVarBinding _ _ = []
 
 -- | Returns multiple bindings for the same variable, if any exist

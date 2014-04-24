@@ -15,6 +15,7 @@ import qualified Data.Set as Set
 import Instances
 import Interpreter
 import Data.List
+import Data.Time
 import Data.Word
 import Data.Maybe
 import Language.Haskell.Syntax
@@ -28,6 +29,7 @@ import Data.Function (on)
 import Control.Arrow
 import Control.Monad (foldM)
 import Control.Parallel.Strategies
+import System.Timeout
 import Debug.Trace
 
 type Concepts = Set HsExp
@@ -35,9 +37,11 @@ type Utility = Int
 type Delta = [Axiom]
 noSrc = SrcLoc "" 0 0
 
+timeLimit = 100000000 -- microseconds, time limit for checking a delta
+
 -- | Free variables are those that occur in lhs but not in rhs.
 -- | For example, the axiom (x*0=0) has one free variable.
-freeVariables = 1
+freeVariables = 2
 
 -- | Use abstraction (anti-unification) when d > 6
 useAbstraction = True
@@ -99,12 +103,13 @@ main = do
             return ()
         else do
         writeFile "trace.txt" " \n"
+        time <- getCurrentTime
         let (Just agent@(Agent comm param@(width,depth,sol) (axioms,concepts))) = agent'
         (pos,neg) <- parseTrainingFile ipfile
         let examples = pos ++ neg
-        let units = makeUnitConcepts examples
-        let unary = makeUnaryConcepts examples
-        let binary = makeBinaryConcepts examples
+        let units = makeUnitConcepts time examples
+        let unary = makeUnaryConcepts time examples
+        let binary = makeBinaryConcepts time examples
         let ipConcepts = nub (units ++ unary ++ binary)
         let updatedConcepts = foldl (flip insertInConcepts) [] (concepts ++ ipConcepts)
         (delt,util,len) <- findDelta 0 (Agent comm param (axioms,updatedConcepts)) neg pos
@@ -187,14 +192,17 @@ findDelta len agent neg posex = do
     else do
         putStrLn $ "Searching at length: " ++ show len
         let posrhs = [e | IP s p e v <- pos, not (containsVar e)]
-        let funcs' = [ (i, [f | f <- generateFuncsAll lang concepts i pos,
+        let types = nub $ [t | (DArrow "Lang" _ y@(HsVar (UnQual (HsIdent t)))) <- ltm']
+        let funcs' = [ (i, [f | f <- generateFuncsAll lang types concepts i pos,
                                isPure f,
                                axSize [] f == i,
                                not (f `elem` ltm),
                                not ((axLhs f) `elem` posrhs),
                                length (freeVars f) <= freeVariables,
+                               --length (freeVars f) <= 0,
                                singleDomain f,
                                not (lhsIsVar f),
+                               not (lhsIsFuncVar f),
                                wmSize [] (axLhs f) >= wmSize [] (axRhs f),
                                if tag=="Lang" then rhsIsTag f else True
                            ])
@@ -216,15 +224,28 @@ findDelta len agent neg posex = do
                                   not (numberChange g)
                           ]
         let delta12 = delta2 ++ (if len < 6 then delta1 else [])
-        --let delta1 = nubBy (\(x:[]) (y:[]) -> lhsIsSame x y && axRhs x == axRhs y) delta1''
+        let deltaAbs = nub [[f] | f <- generateFuncsAbs types posAxioms,
+                                    isPure f,
+                                    not (f `elem` ltm),
+                                    not ((axLhs f) `elem` posrhs),
+                                    length (freeVars f) <= freeVariables,
+                                    singleDomain f,
+                                    not (lhsIsVar f),
+                                    not (lhsIsFuncVar f),
+                                    --wmSize [] (axLhs f) >= wmSize [] (axRhs f),
+                                    if tag=="Lang" then rhsIsTag f else True]
         putStrLn $ "    generated functions: " ++ show (length delta12)
         --appendFile "temp.txt"
         --  $ unlines $ map (\x -> concat . intersperse ", " $ map showAxiom x) delta
         -- let ti = [] :: TypeInfo
         let occam delta = do
                 (t2,result) <- foldM (\(t,xs) d -> do
-                                (t',r) <- performance width depth sol concepts langAxioms ltm t neg pos ded d
-                                return (t',r:xs) )
+                                result <- timeout timeLimit $ performance width depth sol concepts langAxioms ltm t neg pos ded d
+                                if result == Nothing
+                                    then return (t,xs)
+                                    else do let (Just (t',r)) = result
+                                            return (t',r:xs)
+                                      )
                                      (ti,[])
                                      delta
                 let result' = [(x,y,z) | (Just x,y,z) <- result]
@@ -247,33 +268,27 @@ findDelta len agent neg posex = do
                             return $ Just delta
                     else return Nothing
 
+        
+        if len == 1
+        then do
+            putStrLn $ "Trying with abstractions..."
+            putStrLn $ "Abstractions generated: " ++ show (length deltaAbs)
+            result2 <- occam deltaAbs
+            if result2 /= Nothing
+                  then return $ fromJust result2
+                  else findDelta (len+1) agent neg pos
+        else do
+        
         result2 <- occam $ delta12
         if result2 /= Nothing
         then return $ fromJust result2
         else if len == fromIntegral sol
              then do
-                putStrLn $ "Trying with abstractions..."
-                let tags = nub $ [t | (DArrow "Lang" _ y@(HsVar (UnQual (HsIdent t)))) <- ltm']
-                --putStrLn $ "Tags: " ++ show tags
-                let delta' = nub [[f] | f <- generateFuncsAbs tags posAxioms,
-                                    isPure f,
-                                    not (f `elem` ltm),
-                                    not ((axLhs f) `elem` posrhs),
-                                    length (freeVars f) <= freeVariables,
-                                    singleDomain f,
-                                    not (lhsIsVar f),
-                                    --wmSize [] (axLhs f) >= wmSize [] (axRhs f),
-                                    if tag=="Lang" then rhsIsTag f else True]
-                putStrLn $ "Abstractions generated: " ++ show (length delta')
-                result2 <- occam delta'
-                if result2 /= Nothing
-                  then return $ fromJust result2
-                  else do
                     putStrLn $ "Trying with recursion"
                     let delta5 = 
                           [ [g1,g2]
                                 | g1@(DArrow lang _ _) <- posAxioms,
-                                  g2 <- map head $ group $ sort $ generateFuncsRec sol lang concepts tags g1,
+                                  g2 <- map head $ group $ sort $ generateFuncsRec sol lang concepts types g1,
                                   isPure g2,
                                   not (g2 `elem` ltm),
                                   g1 /= g2,
@@ -300,7 +315,12 @@ rhsIsTag (DArrow _ p (HsLit (HsString _))) = True
 rhsIsTag _ = False
 
 lhsIsVar (DArrow _ (HsVar (Qual _ _)) _) = True
+lhsIsVar (SArrow _ (HsVar (Qual _ _)) _) = True
 lhsIsVar _ = False
+
+lhsIsFuncVar (DArrow _ (HsApp (HsVar (UnQual _)) (HsVar (Qual _ _))) _) = True
+lhsIsFuncVar (SArrow _ (HsApp (HsVar (UnQual _)) (HsVar (Qual _ _))) _) = True
+lhsIsFuncVar _ = False
 
 isPure (DArrow _ p q) = 
     let pvar = nub [HsVar e  |(HsVar e@(Qual _ _)) <- getSubExp p]
@@ -323,6 +343,50 @@ lhsIsSame (SArrow s x y) (SArrow t p q) = x == p && s == t
 lhsIsSame _ _ = False
 -----------------------
 
+---------------------- Priority functions -------------------------------------
+deltaSmallest :: [Axiom] -> [([Axiom],Int,Int)] -> [([Axiom],Int,Int)]
+deltaSmallest _ [] = []
+deltaSmallest _ [x] = [x]
+deltaSmallest _ deltas = 
+    let minSize = minimum [len | (_,_,len)  <- deltas]
+    in  [(ax,perf,len) | (ax,perf,len) <- deltas, len == minSize]
+
+deltaMaxVarTokens :: [Axiom] -> [([Axiom],Int,Int)] -> [([Axiom],Int,Int)]
+deltaMaxVarTokens _ [] = []
+deltaMaxVarTokens _ [x] = [x]
+deltaMaxVarTokens _ deltas = 
+    let deltas' = [(ax,perf,len,sum (map countVars ax)) | (ax,perf,len)  <- deltas]
+        maxVarCount = maximum [varCount | (ax,perf,len,varCount) <- deltas']
+    in [(ax,perf,len) | (ax,perf,len,vars) <- deltas', vars == maxVarCount]
+
+deltaMinVarTypes :: [Axiom] -> [([Axiom],Int,Int)] -> [([Axiom],Int,Int)]
+deltaMinVarTypes _ [] = []
+deltaMinVarTypes _ [x] = [x]
+deltaMinVarTypes _ deltas =
+    let deltas' = [(ax,perf,len,sum (map countVarTypes ax)) | (ax,perf,len)  <- deltas]
+        maxVarCount = maximum [varCount | (ax,perf,len,varCount) <- deltas']
+    in [(ax,perf,len) | (ax,perf,len,vars) <- deltas', vars == maxVarCount]
+
+priority1 = deltaSmallest
+priority2 = deltaMaxVarTokens
+priority3 = deltaMinVarTypes
+
+{-
+chooseDelta :: [Axiom] -> [([Axiom],Int,Int)] -> ([Axiom],Int,Int)
+chooseDelta _ [] = ([],0,0)
+chooseDelta _ [x] = x
+chooseDelta lx deltas = do
+    if length (p1 x) == 1
+    then head (p1 x)
+    else do
+    
+  where
+    p1 x = priority1 lx x
+    p2 x = priority2 lx x
+    p3 x = priority3 lx x
+    chooseIfNull d deltas = if (not . null) d then d else deltas
+-}
+  
 chooseBestDelta :: [Axiom] -> [([Axiom],Int,Int)] -> ([Axiom],Int,Int)
 chooseBestDelta lx [] = ([],0,0)
 chooseBestDelta lx [x] = x
@@ -381,6 +445,12 @@ countVars (DArrow _ p q) = countVars' p + countVars' q
 countVars (SArrow _ p q) = countVars' p + countVars' q
 countVars' exp = length [x  | x@(HsVar (Qual _ _)) <- getSubExp exp]
 
+countVarTypes :: Axiom -> Int
+countVarTypes (DArrow _ p q) = length $ nub ([x  | x@(HsVar (Qual _ _)) <- getSubExp p]
+                                             ++ [x  | x@(HsVar (Qual _ _)) <- getSubExp q])
+countVarTypes (SArrow _ p q) = length $ nub ([x  | x@(HsVar (Qual _ _)) <- getSubExp p]
+                                             ++ [x  | x@(HsVar (Qual _ _)) <- getSubExp q])
+
 performance :: Int -> Int -> Int 
             -> [Concept] -> [Axiom] -> [Axiom] -> TypeInfo
             -> [IP] -> [IP] -> [IP]
@@ -389,7 +459,7 @@ performance width depth sol concepts laxioms ltm ti negex pos ded func = do
     --putStrLn $ "TypeInfo size = " ++ show (sum $ map (length . snd) ti)
     --putStrLn $ showTypeInfo ti
     
-    --putStrLn $ unlines $ map showAxiom func
+    putStrLn $ unlines $ map showAxiom func
     let ltm' = ltm ++ func
     (t1,ansPos) <- foldM (\(t,xs) (IP _ a b y) -> do
                             (t',result,len) <- findAnswerDecl concepts laxioms ltm' width depth t (a,b)
@@ -427,14 +497,14 @@ generateFuncsRec d lang concepts tags base =
     let vconsts = "xyz"
         vars = [HsVar (Qual (Module m) (HsIdent [c])) | c <- vconsts, m <- tags]
         units = nub $ vars
-                      ++ [exp | (l,arit,freq,exp) <- concepts, 
+                      ++ [exp | (l,arit,freq,_,_,exp) <- concepts, 
                                 arit==0,
                                 l==lang,
                                 wmSize [] exp == 1]
-        unary  = [exp | (l,arit,freq,exp) <- concepts, arit==1, l==lang]
+        unary  = [exp | (l,arit,freq,_,_,exp) <- concepts, arit==1, l==lang]
         funcs = [f | (HsApp f _) <- getSubExp (axLhs base)]
         unary' = [f | f <- unary, not (f `elem` funcs)]
-        binary = [exp | (l,arit,freq,exp) <- concepts, arit==2, l==lang]
+        binary = [exp | (l,arit,freq,_,_,exp) <- concepts, arit==2, l==lang]
         bigs = [ (i, generateExps i units unary' binary) | i <- [1..d] ]
         lhs = [(HsApp f x) | i <- [3..(d-3)],
                              x <- fromJust (lookup i bigs),
@@ -479,26 +549,25 @@ generateFuncsAbs tags axioms =
                ]
     in  exps
 -- generate all axioms of given size
-generateFuncsAll :: Language -> [Concept] -> Int -> [IP] -> Delta
-generateFuncsAll _  _  len _   | len < 2 = []
-generateFuncsAll lang concepts len pos =
+generateFuncsAll :: Language -> [String] -> [Concept] -> Int -> [IP] -> Delta
+generateFuncsAll _  _  _  len _   | len < 2 = []
+generateFuncsAll lang domains concepts len pos =
     let variables = if lang == "Lang" then "" else "xyz"
-        domains = [s | (_,_,f,(HsVar (UnQual (HsIdent s)))) <- concepts]
         parts = [lhs | (IP _ lhs _ _) <- pos] ++ [rhs | (IP _ _ rhs _) <- pos]
         units = nub $ [x | x <- (concatMap getSubExp parts), size x == 1]
                       ++ [HsVar (Qual (Module d) (HsIdent [c]))
                                 | c <- variables, d <- domains]
-                      ++ [exp | (l,arit,freq,exp) <- concepts, 
+                      ++ [exp | (l,arit,freq,_,_,exp) <- concepts, 
                                 arit==0,
                                 l==lang]
                                 -- size exp == 1]
-        unary  = [exp | (l,arit,freq,exp) <- concepts, arit==1, l==lang] -- ,size exp == 1]
+        unary  = [exp | (l,arit,freq,_,_,exp) <- concepts, arit==1, l==lang] -- ,size exp == 1]
                     -- ++ [HsVar x | (HsApp (HsVar x) _) <- parts]
-        binary = [exp | (l,arit,freq,exp) <- concepts, arit==2, l==lang] -- ,size exp == 1]
+        binary = [exp | (l,arit,freq,_,_,exp) <- concepts, arit==2, l==lang] -- ,size exp == 1]
                     -- ++ [HsVar x | (HsInfixApp _ (HsQVarOp x) _) <- parts]
         exps = [ (i, generateExps i units unary binary) | i <- [1..(len-1)] ]
         result = concat
-                 [ [DArrow lang p q, DArrow lang q p]
+                 [ [DArrow lang p q, DArrow lang q p,SArrow lang p q,SArrow lang q p]
                       | i <- [1 .. (len `div` 2)],
                         q <- fromJust (lookup i exps),
                         p <- fromJust (lookup (len - i) exps),
@@ -551,9 +620,11 @@ generateExps len units funcs1 funcs2
     = let exps2 = generateExps (len-2) units funcs1 funcs2
           exps1 = generateExps (len-1) units funcs1 funcs2
       in [HsInfixApp x (HsQVarOp op) y
-            | x <- exps2,
-              y <- exps2,
-              (HsVar op) <- funcs2]
+            | (HsVar op) <- funcs2,
+              i <- [1..(len-2)],
+              x <- generateExps i units funcs1 funcs2,
+              y <- generateExps (len-1-i) units funcs1 funcs2
+              ]
          ++ [HsApp op arg
               | op <- funcs1,
                 arg <- exps1]
@@ -575,4 +646,4 @@ freeVars :: Axiom -> [HsExp]
 freeVars f =
     let rhsvars = [v | v@(HsVar (Qual _ _)) <- getSubExp (axRhs f)]
         lhsvars = [v | v@(HsVar (Qual _ _)) <- getSubExp (axLhs f)]
-    in [v | v <- lhsvars, not (v `elem` rhsvars)]
+    in nub [v | v <- lhsvars, not (v `elem` rhsvars)]

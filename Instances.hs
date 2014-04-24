@@ -5,6 +5,7 @@ module Instances where
 import Language.Haskell.Syntax
 import qualified Language.Haskell.Pretty as P
 import Niz
+import Data.Time
 import Data.List
 
 data IP  = IP {getTag :: String, lhs :: Lhs, rhs :: Rhs, val :: Int}
@@ -16,6 +17,8 @@ type Depth = Int
 type Solution = Int
 type Arity = Int
 type Frequency = Int
+type FirstTime = UTCTime
+type LastTime  = UTCTime
 type Comments = String
 -- data Language = Boolean | List | Math | Logic | Stream | Analogy2 | Clause
 --     deriving (Eq, Show)
@@ -27,8 +30,8 @@ data Agent = Agent Comments (Width, Depth, Solution) AgentMemory
 instance Size IP where
     size (IP _ x y _) = size x + size y
 
-type Concept' = (Language,Arity,Frequency,String)
-type Concept  = (Language,Arity,Frequency,HsExp)
+type Concept' = (Language,Arity,Frequency,FirstTime,LastTime,String)
+type Concept  = (Language,Arity,Frequency,FirstTime,LastTime,HsExp)
 
 type WM = HsExp
 type Lhs = HsExp

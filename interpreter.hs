@@ -132,9 +132,12 @@ expandNode _ _ m _ maxLength (_, prev, t) | length prev >= maxLength
     = return (Set.empty)
 expandNode concepts lx m maxSize maxLength (Right (exp,_), prev, t) = do
     (t1,r') <- interpreter True lx m maxSize maxLength t exp
-    --putStrLn $ "\nExp: " ++ showExp exp ++ "\n"
-    --putStrLn $ "New wm: " ++  show (length r')
-    --putStrLn $ unlines $ map ("   " ++ ) $ map showExp $ map fst $ nub [r |Right r <- r']
+    -- if not (null lx)
+        -- then do
+                -- putStrLn $ "\nExp: " ++ showExp exp ++ "\n"
+                -- putStrLn $ "New wm: " ++  show (length r')
+                -- putStrLn $ unlines $ map ("   " ++ ) $ map showExp $ map fst $ nub [r |Right r <- r']
+        -- else return ()
     let prev' = (exp:prev)
     let right' = [Right (x,d)
                   |   (Right (x,d)) <- r', 
@@ -317,7 +320,7 @@ interpreter b lx axioms width depth types func@(HsApp f@(HsApp _ _) arg) = do
 interpreter b lx axioms' width depth types func@(HsApp fname arg) = do
       axioms <- filterM (matchingAxiom lx width depth func) axioms'
       (t1,arg') <- interpreter False lx axioms' width depth types arg
-      --putStrLn $ "Interpreter: " ++ (unlines $ map show axioms)
+      --putStrLn $ "Interpreter: " ++ (unlines $ map showAxiom axioms)
       if null axioms && null arg'
       then return (t1,[])
       else do
@@ -331,6 +334,7 @@ interpreter b lx axioms' width depth types func@(HsApp fname arg) = do
                                 return (t',r ++ es))
                            (t1,[])
                            axioms
+        --putStrLn $ "Interpreter: " ++ (unlines $ map showExp $ map fst exp')
         let exp = nubBy ((==) `on` fst) exp'
         let argnew = [Right (HsApp fname r, d) | (r,d) <- rights arg', r /= arg]
         if null argnew
@@ -470,6 +474,8 @@ applyRule' lx width depth (HsApp n (HsInfixApp x (HsQVarOp (UnQual (HsSymbol "+"
     | n == func
         = return $ Just $ replacePatExp exp x (HsLit (HsInt (j - i)))
 -}
+
+-- replace
 applyRule' lx width depth t (HsApp (HsVar (UnQual n)) pat) exp (HsApp (HsVar (UnQual fname)) arg)
     | n == fname && null (sameVarBinding $ nub $ expVarBinding pat arg)
         = do (t',m) <- matchExpExp lx width depth t pat arg
@@ -598,6 +604,10 @@ matchExpExp lx w d t (HsApp (HsCon p) p') (HsApp (HsCon e) e') | p == e
         = matchExpExp lx w d t p' e'
 matchExpExp lx w d t (HsApp (HsVar p) p') (HsApp (HsVar e) e') | p == e 
         = matchExpExp lx w d t p' e'
+matchExpExp lx w d t (HsApp (HsCon p) p') (HsApp (HsVar e) e') | p == e 
+        = matchExpExp lx w d t p' e'
+matchExpExp lx w d t (HsApp (HsVar p) p') (HsApp (HsCon e) e') | p == e 
+        = matchExpExp lx w d t p' e'
 matchExpExp _ _ _ t _ _ = return (t,False)
 
 mergeTypeInfo [] t = t
@@ -628,9 +638,9 @@ axSize c (SArrow _ x y) = wmSize c x + wmSize c y
 
 wmSize :: [Concept] -> HsExp -> Int
 wmSize c e = 
-  if e `elem` [x | (_,_,_,x) <- c]
-  then 1
-  else
+--  if e `elem` [x | (_,_,_,_,_,x) <- c]
+--  then 1
+--  else
     case e of
     HsVar _ -> 1
     HsCon _ -> 1
